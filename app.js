@@ -1,7 +1,11 @@
 import USERS from './users.js';
 
+// --- Firebase Setup ---
+const db = firebase.database();
+const bookingsRef = db.ref('bookings');
+
 // --- State Management ---
-let bookings = JSON.parse(localStorage.getItem('sala05_bookings')) || [];
+let bookings = [];
 let currentView = 'reservation';
 let selectedDate = new Date().toISOString().split('T')[0];
 let selectedTimeSlots = [];
@@ -17,12 +21,42 @@ function init() {
     setupEventListeners();
     populateUserList();
     updateDateDisplay();
-    renderTimeGrid();
-    renderTodayBookings();
-    updateDashboardStats();
     
     // Set default date in input
     document.getElementById('booking-date').value = selectedDate;
+
+    // Migrate any existing localStorage data to Firebase (one-time)
+    const localData = localStorage.getItem('sala05_bookings');
+    if (localData) {
+        try {
+            const localBookings = JSON.parse(localData);
+            localBookings.forEach(booking => {
+                const { id, ...bookingData } = booking;
+                bookingsRef.push(bookingData);
+            });
+            localStorage.removeItem('sala05_bookings');
+            console.log('Dados locais migrados para Firebase com sucesso!');
+        } catch (e) {
+            console.error('Erro ao migrar dados locais:', e);
+            localStorage.removeItem('sala05_bookings');
+        }
+    }
+
+    // Firebase real-time listener — keeps data in sync across ALL users
+    bookingsRef.on('value', (snapshot) => {
+        bookings = [];
+        const data = snapshot.val();
+        if (data) {
+            Object.keys(data).forEach(key => {
+                bookings.push({ ...data[key], id: key });
+            });
+        }
+        // Re-render everything when data changes
+        renderTimeGrid();
+        renderTodayBookings();
+        updateDashboardStats();
+        if (currentView === 'admin') renderAdminHistory();
+    });
 }
 
 // --- DOM Elements ---
@@ -162,12 +196,11 @@ function handleReserve() {
         return;
     }
 
-    const newBookings = [];
     const timestamp = new Date().toISOString();
 
     if (isFullDay) {
-        newBookings.push({
-            id: Date.now().toString(),
+        // Push full-day booking to Firebase
+        bookingsRef.push({
             userName,
             date: selectedDate,
             time: '08:00 - 18:00',
@@ -177,9 +210,9 @@ function handleReserve() {
             timestamp
         });
     } else {
+        // Push each time slot booking to Firebase
         selectedTimeSlots.forEach(time => {
-            newBookings.push({
-                id: (Date.now() + Math.random()).toString(),
+            bookingsRef.push({
                 userName,
                 date: selectedDate,
                 time,
@@ -191,21 +224,12 @@ function handleReserve() {
         });
     }
 
-    bookings.push(...newBookings);
-    saveData();
-    
     showConfirmation(`Reserva realizada com sucesso para ${userName} no dia ${selectedDate}.`);
     
     // Reset selection
     selectedTimeSlots = [];
     fullDayToggle.checked = false;
-    renderTimeGrid();
-    renderTodayBookings();
-    updateDashboardStats();
-}
-
-function saveData() {
-    localStorage.setItem('sala05_bookings', JSON.stringify(bookings));
+    // Firebase real-time listener will auto-refresh the UI
 }
 
 // --- Admin History ---
@@ -327,13 +351,9 @@ function handleCancel() {
     const admin = USERS.find(u => u.isAdmin);
 
     if (password === user.password || password === admin.password) {
-        booking.status = 'canceled';
-        saveData();
+        // Update status in Firebase — real-time listener handles re-rendering
+        bookingsRef.child(booking.id).update({ status: 'canceled' });
         document.getElementById('password-modal').style.display = 'none';
-        renderTimeGrid();
-        renderTodayBookings();
-        updateDashboardStats();
-        if (currentView === 'admin') renderAdminHistory();
         alert('Reserva cancelada com sucesso.');
     } else {
         alert('Senha incorreta.');
@@ -358,12 +378,8 @@ function handleAdminLogin() {
 }
 
 window.confirmKey = function(id) {
-    const booking = bookings.find(b => b.id === id);
-    if (booking) {
-        booking.keyReceived = true;
-        saveData();
-        renderAdminHistory();
-    }
+    // Update keyReceived in Firebase — real-time listener handles re-rendering
+    bookingsRef.child(id).update({ keyReceived: true });
 };
 
 function showConfirmation(msg) {

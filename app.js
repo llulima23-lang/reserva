@@ -7,7 +7,15 @@ const bookingsRef = db.ref('bookings');
 // --- State Management ---
 let bookings = [];
 let currentView = 'reservation';
-let selectedDate = new Date().toISOString().split('T')[0];
+
+// Initialize with local date (YYYY-MM-DD)
+function getLocalDateString() {
+    const now = new Date();
+    const offset = now.getTimezoneOffset() * 60000;
+    return (new Date(now - offset)).toISOString().split('T')[0];
+}
+
+let selectedDate = getLocalDateString();
 let selectedTimeSlots = [];
 let bookingToCancel = null;
 
@@ -21,26 +29,10 @@ function init() {
     setupEventListeners();
     populateUserList();
     updateDateDisplay();
+    setupConnectionListener();
     
     // Set default date in input
     document.getElementById('booking-date').value = selectedDate;
-
-    // Migrate any existing localStorage data to Firebase (one-time)
-    const localData = localStorage.getItem('sala05_bookings');
-    if (localData) {
-        try {
-            const localBookings = JSON.parse(localData);
-            localBookings.forEach(booking => {
-                const { id, ...bookingData } = booking;
-                bookingsRef.push(bookingData);
-            });
-            localStorage.removeItem('sala05_bookings');
-            console.log('Dados locais migrados para Firebase com sucesso!');
-        } catch (e) {
-            console.error('Erro ao migrar dados locais:', e);
-            localStorage.removeItem('sala05_bookings');
-        }
-    }
 
     // Firebase real-time listener — keeps data in sync across ALL users
     bookingsRef.on('value', (snapshot) => {
@@ -56,6 +48,27 @@ function init() {
         renderTodayBookings();
         updateDashboardStats();
         if (currentView === 'admin') renderAdminHistory();
+    }, (error) => {
+        console.error('Erro no Firebase Listener:', error);
+        alert('Erro ao sincronizar dados. Por favor, verifique se sua conexão está ativa ou se as regras do banco expiraram.');
+    });
+}
+
+function setupConnectionListener() {
+    const statusEl = document.getElementById('connection-status');
+    const statusText = statusEl.querySelector('.status-text');
+    const connectedRef = firebase.database().ref(".info/connected");
+
+    connectedRef.on("value", (snap) => {
+        if (snap.val() === true) {
+            statusEl.classList.remove('offline');
+            statusEl.classList.add('online');
+            statusText.textContent = 'Conectado';
+        } else {
+            statusEl.classList.remove('online');
+            statusEl.classList.add('offline');
+            statusText.textContent = 'Offline';
+        }
     });
 }
 
@@ -196,11 +209,14 @@ function handleReserve() {
         return;
     }
 
+    // Show loading state
+    btnReserve.disabled = true;
+
     const timestamp = new Date().toISOString();
+    const promises = [];
 
     if (isFullDay) {
-        // Push full-day booking to Firebase
-        bookingsRef.push({
+        promises.push(bookingsRef.push({
             userName,
             date: selectedDate,
             time: '08:00 - 18:00',
@@ -208,11 +224,10 @@ function handleReserve() {
             status: 'active',
             keyReceived: false,
             timestamp
-        });
+        }));
     } else {
-        // Push each time slot booking to Firebase
         selectedTimeSlots.forEach(time => {
-            bookingsRef.push({
+            promises.push(bookingsRef.push({
                 userName,
                 date: selectedDate,
                 time,
@@ -220,16 +235,24 @@ function handleReserve() {
                 status: 'active',
                 keyReceived: false,
                 timestamp
-            });
+            }));
         });
     }
 
-    showConfirmation(`Reserva realizada com sucesso para ${userName} no dia ${selectedDate}.`);
-    
-    // Reset selection
-    selectedTimeSlots = [];
-    fullDayToggle.checked = false;
-    // Firebase real-time listener will auto-refresh the UI
+    Promise.all(promises)
+        .then(() => {
+            showConfirmation(`Reserva realizada com sucesso para ${userName} no dia ${selectedDate}.`);
+            // Reset selection
+            selectedTimeSlots = [];
+            fullDayToggle.checked = false;
+        })
+        .catch(err => {
+            console.error('Erro ao salvar no Firebase:', err);
+            alert('Falha ao salvar reserva. Verifique sua internet ou se o banco de dados está disponível.');
+        })
+        .finally(() => {
+            btnReserve.disabled = false;
+        });
 }
 
 // --- Admin History ---

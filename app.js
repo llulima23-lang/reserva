@@ -372,8 +372,13 @@ function handleCancel() {
 
     const user = USERS.find(u => u.name === booking.userName);
     const admin = USERS.find(u => u.isAdmin);
+    const managers = USERS.filter(u => u.canCancelOthers);
 
-    if (password === user.password || password === admin.password) {
+    const isUserPassword = user && user.password && password === user.password;
+    const isAdminPassword = admin && admin.password && password === admin.password;
+    const isManagerPassword = managers.some(m => m.password && password === m.password);
+
+    if (isUserPassword || isAdminPassword || isManagerPassword) {
         // Update status in Firebase — real-time listener handles re-rendering
         bookingsRef.child(booking.id).update({ status: 'canceled' });
         document.getElementById('password-modal').style.display = 'none';

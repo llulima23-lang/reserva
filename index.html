@@ -112,6 +112,30 @@
                     </div>
                 </header>
 
+                <div class="card" style="margin-bottom: 2rem;">
+                    <div class="card-title">
+                        Uso por Usuário
+                        <div class="chart-filters">
+                            <div class="filter-group">
+                                <label for="chart-month">Mês:</label>
+                                <input type="month" id="chart-month">
+                            </div>
+                            <span class="filter-separator">ou período:</span>
+                            <div class="filter-group">
+                                <label for="chart-start-date">De:</label>
+                                <input type="date" id="chart-start-date">
+                            </div>
+                            <div class="filter-group">
+                                <label for="chart-end-date">Até:</label>
+                                <input type="date" id="chart-end-date">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="usage-chart"></canvas>
+                    </div>
+                </div>
+
                 <div class="admin-table-container">
                     <table id="history-table">
                         <thead>
@@ -177,6 +201,10 @@
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-database-compat.js"></script>
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
     <script>
         firebase.initializeApp({
             apiKey: "AIzaSyC3rcDKPQCqMkKtTEuqkjO013d2M6IU0jc",
@@ -188,6 +216,7 @@
             appId: "1:790771452030:web:e6bb126526c46e00ccb02f"
         });
     </script>
-    <script type="module" src="app.js"></script>
+    <script src="users.js"></script>
+    <script src="app.js"></script>
 </body>
 </html>

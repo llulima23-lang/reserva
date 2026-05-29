@@ -1,4 +1,3 @@
-import USERS from './users.js';
 
 // --- Firebase Setup ---
 const db = firebase.database();
@@ -7,6 +6,7 @@ const bookingsRef = db.ref('bookings');
 // --- State Management ---
 let bookings = [];
 let currentView = 'reservation';
+let usageChartInstance = null;
 
 // Initialize with local date (YYYY-MM-DD)
 function getLocalDateString() {
@@ -18,6 +18,14 @@ function getLocalDateString() {
 let selectedDate = getLocalDateString();
 let selectedTimeSlots = [];
 let bookingToCancel = null;
+
+// Chart filters
+const nowChart = new Date();
+const firstDay = new Date(nowChart.getFullYear(), nowChart.getMonth(), 1);
+const lastDay = new Date(nowChart.getFullYear(), nowChart.getMonth() + 1, 0);
+
+let chartStartDate = new Date(firstDay - firstDay.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+let chartEndDate = new Date(lastDay - lastDay.getTimezoneOffset() * 60000).toISOString().split('T')[0];
 
 const WORKING_HOURS = [
     '08:00', '09:00', '10:00', '11:00', '12:00', 
@@ -33,6 +41,11 @@ function init() {
     
     // Set default date in input
     document.getElementById('booking-date').value = selectedDate;
+    
+    const now = new Date();
+    document.getElementById('chart-month').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    document.getElementById('chart-start-date').value = chartStartDate;
+    document.getElementById('chart-end-date').value = chartEndDate;
 
     // Firebase real-time listener — keeps data in sync across ALL users
     bookingsRef.on('value', (snapshot) => {
@@ -47,7 +60,10 @@ function init() {
         renderTimeGrid();
         renderTodayBookings();
         updateDashboardStats();
-        if (currentView === 'admin') renderAdminHistory();
+        if (currentView === 'admin') {
+            renderAdminHistory();
+            renderUsageChart();
+        }
     }, (error) => {
         console.error('Erro no Firebase Listener:', error);
         alert('Erro ao sincronizar dados. Por favor, verifique se sua conexão está ativa ou se as regras do banco expiraram.');
@@ -256,9 +272,104 @@ function handleReserve() {
 }
 
 // --- Admin History ---
+function renderUsageChart() {
+    const ctxElement = document.getElementById('usage-chart');
+    if (!ctxElement) return;
+    const ctx = ctxElement.getContext('2d');
+
+    // Filter bookings between start and end date and status 'active'
+    const filtered = bookings.filter(b => {
+        return b.status === 'active' && b.date >= chartStartDate && b.date <= chartEndDate;
+    });
+
+    // Aggregate hours per user
+    const userHours = {};
+    filtered.forEach(b => {
+        const hours = b.fullDay ? 10 : 1;
+        userHours[b.userName] = (userHours[b.userName] || 0) + hours;
+    });
+
+    const labels = Object.keys(userHours);
+    const data = Object.values(userHours);
+
+    // Sort by hours descending
+    const sortedData = labels.map((label, index) => ({ label, value: data[index] }))
+                             .sort((a, b) => b.value - a.value);
+
+    const sortedLabels = sortedData.map(item => item.label);
+    const sortedValues = sortedData.map(item => item.value);
+
+    if (usageChartInstance) {
+        usageChartInstance.destroy();
+    }
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+    gradient.addColorStop(0, '#2ecc71');
+    gradient.addColorStop(1, '#1b8a48');
+
+    usageChartInstance = new Chart(ctxElement, {
+        type: 'bar',
+        data: {
+            labels: sortedLabels,
+            datasets: [{
+                label: 'Total de Horas Reservadas',
+                data: sortedValues,
+                backgroundColor: gradient,
+                borderRadius: 6,
+                borderSkipped: false,
+                barThickness: 'flex',
+                maxBarThickness: 50
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: {
+                duration: 800,
+                easing: 'easeOutQuart'
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: { precision: 0, font: { family: 'Inter' } },
+                    grid: { color: '#f1f5f9' },
+                    border: { display: false }
+                },
+                x: {
+                    grid: { display: false },
+                    border: { display: false },
+                    ticks: { font: { family: 'Inter', weight: '600' } }
+                }
+            },
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    backgroundColor: '#1e293b',
+                    titleFont: { family: 'Inter', size: 14 },
+                    bodyFont: { family: 'Inter', size: 13 },
+                    padding: 12,
+                    cornerRadius: 8,
+                    displayColors: false
+                }
+            }
+        }
+    });
+}
+
 function renderAdminHistory() {
     historyTbody.innerHTML = '';
-    const sorted = [...bookings].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    
+    const filtered = bookings.filter(b => {
+        return b.date >= chartStartDate && b.date <= chartEndDate;
+    });
+
+    const sorted = [...filtered].sort((a, b) => {
+        const dateCompare = b.date.localeCompare(a.date);
+        if (dateCompare !== 0) return dateCompare;
+        return (b.time || '').localeCompare(a.time || '');
+    });
     
     sorted.forEach(b => {
         const tr = document.createElement('tr');
@@ -311,6 +422,49 @@ function setupEventListeners() {
         renderTodayBookings();
     });
 
+    const monthInput = document.getElementById('chart-month');
+    const startInput = document.getElementById('chart-start-date');
+    const endInput = document.getElementById('chart-end-date');
+
+    monthInput.addEventListener('change', (e) => {
+        if (!e.target.value) return;
+        const [year, month] = e.target.value.split('-');
+        const firstDay = new Date(year, month - 1, 1);
+        const lastDay = new Date(year, month, 0);
+        
+        const offsetFirst = firstDay.getTimezoneOffset() * 60000;
+        const offsetLast = lastDay.getTimezoneOffset() * 60000;
+        
+        chartStartDate = (new Date(firstDay - offsetFirst)).toISOString().split('T')[0];
+        chartEndDate = (new Date(lastDay - offsetLast)).toISOString().split('T')[0];
+        
+        startInput.value = chartStartDate;
+        endInput.value = chartEndDate;
+        
+        if (currentView === 'admin') {
+            renderAdminHistory();
+            renderUsageChart();
+        }
+    });
+
+    startInput.addEventListener('change', (e) => {
+        chartStartDate = e.target.value;
+        monthInput.value = ''; // limpa o mês
+        if (currentView === 'admin') {
+            renderAdminHistory();
+            renderUsageChart();
+        }
+    });
+
+    endInput.addEventListener('change', (e) => {
+        chartEndDate = e.target.value;
+        monthInput.value = ''; // limpa o mês
+        if (currentView === 'admin') {
+            renderAdminHistory();
+            renderUsageChart();
+        }
+    });
+
     fullDayToggle.addEventListener('change', (e) => {
         if (e.target.checked) {
             selectedTimeSlots = [];
@@ -353,6 +507,7 @@ function switchView(view) {
         navReservation.classList.remove('active');
         navAdmin.classList.add('active');
         renderAdminHistory();
+        renderUsageChart();
     }
 }
 

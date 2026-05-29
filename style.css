@@ -450,3 +450,36 @@ td {
     to { transform: rotate(360deg); }
 }
 
+/* Chart Component */
+.chart-filters {
+    display: flex;
+    gap: 1.5rem;
+    align-items: center;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.filter-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.filter-group input {
+    padding: 0.5rem;
+    width: auto;
+}
+
+.chart-container {
+    position: relative;
+    height: 350px;
+    width: 100%;
+    margin-top: 1rem;
+}
+
+.filter-separator {
+    color: var(--text-light);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+

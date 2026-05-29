@@ -31,4 +31,3 @@ const USERS = [
     { name: "Marketing", password: null }
 ];
 
-export default USERS;

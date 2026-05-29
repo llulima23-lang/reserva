@@ -28,6 +28,7 @@ const USERS = [
     { name: "TI", password: null },
     { name: "Qualidade", password: null },
     { name: "Estacio", password: null },
-    { name: "Marketing", password: null }
+    { name: "Marketing", password: null },
+    { name: "Financeiro", password: null }
 ];
 

@@ -1,0 +1,611 @@
+
+// --- Firebase Setup ---
+const db = firebase.database();
+const bookingsRef = db.ref('bookings');
+
+// --- State Management ---
+let bookings = [];
+let currentView = 'reservation';
+let usageChartInstance = null;
+
+// Initialize with local date (YYYY-MM-DD)
+function getLocalDateString() {
+    const now = new Date();
+    const offset = now.getTimezoneOffset() * 60000;
+    return (new Date(now - offset)).toISOString().split('T')[0];
+}
+
+let selectedDate = getLocalDateString();
+let selectedTimeSlots = [];
+let bookingToCancel = null;
+
+// Chart filters
+const nowChart = new Date();
+const firstDay = new Date(nowChart.getFullYear(), nowChart.getMonth(), 1);
+const lastDay = new Date(nowChart.getFullYear(), nowChart.getMonth() + 1, 0);
+
+let chartStartDate = new Date(firstDay - firstDay.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+let chartEndDate = new Date(lastDay - lastDay.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+
+const WORKING_HOURS = [
+    '08:00', '09:00', '10:00', '11:00', '12:00', 
+    '13:00', '14:00', '15:00', '16:00', '17:00'
+];
+
+// --- Initialization ---
+function init() {
+    setupEventListeners();
+    populateUserList();
+    updateDateDisplay();
+    setupConnectionListener();
+    
+    // Set default date in input
+    document.getElementById('booking-date').value = selectedDate;
+    
+    const now = new Date();
+    document.getElementById('chart-month').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    document.getElementById('chart-start-date').value = chartStartDate;
+    document.getElementById('chart-end-date').value = chartEndDate;
+
+    // Firebase real-time listener — keeps data in sync across ALL users
+    bookingsRef.on('value', (snapshot) => {
+        bookings = [];
+        const data = snapshot.val();
+        if (data) {
+            Object.keys(data).forEach(key => {
+                bookings.push({ ...data[key], id: key });
+            });
+        }
+        // Re-render everything when data changes
+        renderTimeGrid();
+        renderTodayBookings();
+        updateDashboardStats();
+        if (currentView === 'admin') {
+            renderAdminHistory();
+            renderUsageChart();
+        }
+    }, (error) => {
+        console.error('Erro no Firebase Listener:', error);
+        alert('Erro ao sincronizar dados. Por favor, verifique se sua conexão está ativa ou se as regras do banco expiraram.');
+    });
+}
+
+function setupConnectionListener() {
+    const statusEl = document.getElementById('connection-status');
+    const statusText = statusEl.querySelector('.status-text');
+    const connectedRef = firebase.database().ref(".info/connected");
+
+    connectedRef.on("value", (snap) => {
+        if (snap.val() === true) {
+            statusEl.classList.remove('offline');
+            statusEl.classList.add('online');
+            statusText.textContent = 'Conectado';
+        } else {
+            statusEl.classList.remove('online');
+            statusEl.classList.add('offline');
+            statusText.textContent = 'Offline';
+        }
+    });
+}
+
+// --- DOM Elements ---
+const navReservation = document.getElementById('nav-reservation');
+const navAdmin = document.getElementById('nav-admin');
+const reservationView = document.getElementById('reservation-view');
+const adminView = document.getElementById('admin-view');
+const userSelect = document.getElementById('user-select');
+const timeGrid = document.getElementById('time-grid');
+const bookingDateInput = document.getElementById('booking-date');
+const fullDayToggle = document.getElementById('full-day-toggle');
+const btnReserve = document.getElementById('btn-reserve');
+const todayBookingList = document.getElementById('today-booking-list');
+const historyTbody = document.getElementById('history-tbody');
+
+// --- Functions ---
+
+function populateUserList() {
+    USERS.sort((a, b) => a.name.localeCompare(b.name)).forEach(user => {
+        const option = document.createElement('option');
+        option.value = user.name;
+        option.textContent = user.name;
+        userSelect.appendChild(option);
+    });
+}
+
+function updateDateDisplay() {
+    const options = { weekday: 'long', day: 'numeric', month: 'long' };
+    const date = new Date(selectedDate + 'T12:00:00');
+    document.getElementById('current-date-subtitle').textContent = date.toLocaleDateString('pt-BR', options);
+}
+
+function renderTimeGrid() {
+    timeGrid.innerHTML = '';
+    const dayBookings = bookings.filter(b => b.date === selectedDate && b.status === 'active');
+    
+    WORKING_HOURS.forEach(hour => {
+        const slot = document.createElement('div');
+        slot.className = 'time-slot';
+        slot.textContent = hour;
+        
+        const isOccupied = dayBookings.some(b => b.time === hour || b.fullDay);
+        
+        if (isOccupied) {
+            slot.classList.add('disabled');
+            const booking = dayBookings.find(b => b.time === hour || b.fullDay);
+            slot.title = `Reservado por: ${booking.userName}`;
+        } else {
+            slot.addEventListener('click', () => toggleTimeSlot(hour, slot));
+        }
+        
+        timeGrid.appendChild(slot);
+    });
+}
+
+function toggleTimeSlot(hour, element) {
+    if (fullDayToggle.checked) return;
+    
+    if (selectedTimeSlots.includes(hour)) {
+        selectedTimeSlots = selectedTimeSlots.filter(t => t !== hour);
+        element.classList.remove('selected');
+    } else {
+        selectedTimeSlots.push(hour);
+        element.classList.add('selected');
+    }
+}
+
+function renderTodayBookings() {
+    todayBookingList.innerHTML = '';
+    const dayBookings = bookings.filter(b => b.date === selectedDate && b.status === 'active');
+    
+    if (dayBookings.length === 0) {
+        todayBookingList.innerHTML = '<p style="text-align: center; color: var(--text-light); font-size: 0.8rem;">Nenhum agendamento para este dia.</p>';
+        return;
+    }
+
+    // Group by user if it's the same full day
+    const displayList = [];
+    const fullDayBooking = dayBookings.find(b => b.fullDay);
+    
+    if (fullDayBooking) {
+        displayList.push(fullDayBooking);
+    } else {
+        // Sort by time
+        dayBookings.sort((a, b) => a.time.localeCompare(b.time)).forEach(b => displayList.push(b));
+    }
+
+    displayList.forEach(booking => {
+        const item = document.createElement('div');
+        item.className = 'booking-item';
+        item.innerHTML = `
+            <div class="booking-info">
+                <h4>${booking.userName}</h4>
+                <span>${booking.fullDay ? 'Dia Inteiro' : booking.time}</span>
+            </div>
+            <button class="btn-cancel" onclick="openCancelModal('${booking.id}')">Cancelar</button>
+        `;
+        todayBookingList.appendChild(item);
+    });
+}
+
+function updateDashboardStats() {
+    const today = new Date().toISOString().split('T')[0];
+    const thisMonth = today.substring(0, 7);
+    
+    const todayBookings = bookings.filter(b => b.date === today && b.status === 'active').length;
+    const monthBookings = bookings.filter(b => b.date.startsWith(thisMonth) && b.status === 'active').length;
+    const todayCancels = bookings.filter(b => b.date === today && b.status === 'canceled').length;
+    const monthCancels = bookings.filter(b => b.date.startsWith(thisMonth) && b.status === 'canceled').length;
+    
+    const totalMonthActions = monthBookings + monthCancels;
+    const cancelRate = totalMonthActions > 0 ? Math.round((monthCancels / totalMonthActions) * 100) : 0;
+    
+    document.getElementById('stats-today-bookings').textContent = todayBookings;
+    document.getElementById('stats-month-bookings').textContent = monthBookings;
+    document.getElementById('stats-today-cancels').textContent = todayCancels;
+    document.getElementById('stats-month-cancel-rate').textContent = `${cancelRate}%`;
+}
+
+function handleReserve() {
+    const userName = userSelect.value;
+    const isFullDay = fullDayToggle.checked;
+    
+    if (!userName) {
+        alert('Por favor, selecione seu nome.');
+        return;
+    }
+    
+    if (!isFullDay && selectedTimeSlots.length === 0) {
+        alert('Por favor, selecione ao menos um horário.');
+        return;
+    }
+
+    const dayOfWeek = new Date(selectedDate + 'T12:00:00').getDay();
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+        alert('Reservas permitidas apenas de segunda a sexta-feira.');
+        return;
+    }
+
+    // Show loading state
+    btnReserve.disabled = true;
+
+    const timestamp = new Date().toISOString();
+    const promises = [];
+
+    if (isFullDay) {
+        promises.push(bookingsRef.push({
+            userName,
+            date: selectedDate,
+            time: '08:00 - 18:00',
+            fullDay: true,
+            status: 'active',
+            keyReceived: false,
+            timestamp
+        }));
+    } else {
+        selectedTimeSlots.forEach(time => {
+            promises.push(bookingsRef.push({
+                userName,
+                date: selectedDate,
+                time,
+                fullDay: false,
+                status: 'active',
+                keyReceived: false,
+                timestamp
+            }));
+        });
+    }
+
+    Promise.all(promises)
+        .then(() => {
+            showConfirmation(`Reserva realizada com sucesso para ${userName} no dia ${selectedDate}.`);
+            // Reset selection
+            selectedTimeSlots = [];
+            fullDayToggle.checked = false;
+        })
+        .catch(err => {
+            console.error('Erro ao salvar no Firebase:', err);
+            alert('Falha ao salvar reserva. Verifique sua internet ou se o banco de dados está disponível.');
+        })
+        .finally(() => {
+            btnReserve.disabled = false;
+        });
+}
+
+// --- Admin History ---
+function renderUsageChart() {
+    const ctxElement = document.getElementById('usage-chart');
+    if (!ctxElement) return;
+    const ctx = ctxElement.getContext('2d');
+
+    // Filter bookings between start and end date and status 'active'
+    const filtered = bookings.filter(b => {
+        return b.status === 'active' && b.date >= chartStartDate && b.date <= chartEndDate;
+    });
+
+    // Aggregate hours per user
+    const userHours = {};
+    filtered.forEach(b => {
+        const hours = b.fullDay ? 10 : 1;
+        userHours[b.userName] = (userHours[b.userName] || 0) + hours;
+    });
+
+    const labels = Object.keys(userHours);
+    const data = Object.values(userHours);
+
+    // Sort by hours descending
+    const sortedData = labels.map((label, index) => ({ label, value: data[index] }))
+                             .sort((a, b) => b.value - a.value);
+
+    const sortedLabels = sortedData.map(item => item.label);
+    const sortedValues = sortedData.map(item => item.value);
+
+    if (usageChartInstance) {
+        usageChartInstance.destroy();
+    }
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+    gradient.addColorStop(0, '#2ecc71');
+    gradient.addColorStop(1, '#1b8a48');
+
+    usageChartInstance = new Chart(ctxElement, {
+        type: 'bar',
+        data: {
+            labels: sortedLabels,
+            datasets: [{
+                label: 'Total de Horas Reservadas',
+                data: sortedValues,
+                backgroundColor: gradient,
+                borderRadius: 6,
+                borderSkipped: false,
+                barThickness: 'flex',
+                maxBarThickness: 50
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: {
+                duration: 800,
+                easing: 'easeOutQuart'
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: { precision: 0, font: { family: 'Inter' } },
+                    grid: { color: '#f1f5f9' },
+                    border: { display: false }
+                },
+                x: {
+                    grid: { display: false },
+                    border: { display: false },
+                    ticks: { font: { family: 'Inter', weight: '600' } }
+                }
+            },
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    backgroundColor: '#1e293b',
+                    titleFont: { family: 'Inter', size: 14 },
+                    bodyFont: { family: 'Inter', size: 13 },
+                    padding: 12,
+                    cornerRadius: 8,
+                    displayColors: false
+                }
+            }
+        }
+    });
+}
+
+function renderAdminHistory() {
+    historyTbody.innerHTML = '';
+    
+    const filtered = bookings.filter(b => {
+        return b.date >= chartStartDate && b.date <= chartEndDate;
+    });
+
+    const sorted = [...filtered].sort((a, b) => {
+        const dateCompare = a.date.localeCompare(b.date);
+        if (dateCompare !== 0) return dateCompare;
+        return (a.time || '').localeCompare(b.time || '');
+    });
+    
+    sorted.forEach(b => {
+        const tr = document.createElement('tr');
+        const dateObj = new Date(b.date + 'T12:00:00');
+        const formattedDate = dateObj.toLocaleDateString('pt-BR');
+        
+        const now = new Date();
+        const offset = now.getTimezoneOffset() * 60000;
+        const localNow = new Date(now - offset);
+        const currentDate = localNow.toISOString().split('T')[0];
+        
+        let isEligibleForKey = false;
+        if (b.status === 'active') {
+            if (currentDate > b.date) {
+                isEligibleForKey = true;
+            } else if (currentDate === b.date) {
+                if (b.fullDay) {
+                    isEligibleForKey = true;
+                } else {
+                    const bookingHour = parseInt(b.time.substring(0, 2), 10);
+                    if (now.getHours() >= bookingHour) {
+                        isEligibleForKey = true;
+                    }
+                }
+            }
+        }
+        
+        tr.innerHTML = `
+            <td>${formattedDate} ${b.fullDay ? '' : b.time}</td>
+            <td>${b.userName}</td>
+            <td>${b.fullDay ? 'Dia Todo' : 'Horário'}</td>
+            <td>
+                <span class="badge badge-${b.status}">${b.status === 'active' ? 'Ativo' : 'Cancelado'}</span>
+                ${b.status === 'canceled' && b.canceledBy ? `<div style="font-size: 0.7rem; color: #64748b; margin-top: 4px;">por ${b.canceledBy}</div>` : ''}
+            </td>
+            <td>
+                ${isEligibleForKey ? 
+                    (b.keyReceived ? 
+                        '<span class="badge badge-key-received">Chave Recebida</span>' : 
+                        '<span class="badge badge-key">Pendente</span>'
+                    ) : '-'
+                }
+            </td>
+            <td>
+                ${(isEligibleForKey && !b.keyReceived) ? 
+                    `<button class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; width: auto;" onclick="confirmKey('${b.id}')">Recebi Chave</button>` : 
+                    ''
+                }
+                ${b.status === 'active' ? 
+                    `<button class="btn-cancel" onclick="openCancelModal('${b.id}')">Excluir</button>` : 
+                    ''
+                }
+            </td>
+        `;
+        historyTbody.appendChild(tr);
+    });
+}
+
+// --- Event Listeners ---
+function setupEventListeners() {
+    navReservation.addEventListener('click', () => {
+        switchView('reservation');
+    });
+
+    navAdmin.addEventListener('click', () => {
+        openAdminAuth();
+    });
+
+    bookingDateInput.addEventListener('change', (e) => {
+        selectedDate = e.target.value;
+        updateDateDisplay();
+        selectedTimeSlots = [];
+        renderTimeGrid();
+        renderTodayBookings();
+    });
+
+    const monthInput = document.getElementById('chart-month');
+    const startInput = document.getElementById('chart-start-date');
+    const endInput = document.getElementById('chart-end-date');
+
+    monthInput.addEventListener('change', (e) => {
+        if (!e.target.value) return;
+        const [year, month] = e.target.value.split('-');
+        const firstDay = new Date(year, month - 1, 1);
+        const lastDay = new Date(year, month, 0);
+        
+        const offsetFirst = firstDay.getTimezoneOffset() * 60000;
+        const offsetLast = lastDay.getTimezoneOffset() * 60000;
+        
+        chartStartDate = (new Date(firstDay - offsetFirst)).toISOString().split('T')[0];
+        chartEndDate = (new Date(lastDay - offsetLast)).toISOString().split('T')[0];
+        
+        startInput.value = chartStartDate;
+        endInput.value = chartEndDate;
+        
+        if (currentView === 'admin') {
+            renderAdminHistory();
+            renderUsageChart();
+        }
+    });
+
+    startInput.addEventListener('change', (e) => {
+        chartStartDate = e.target.value;
+        monthInput.value = ''; // limpa o mês
+        if (currentView === 'admin') {
+            renderAdminHistory();
+            renderUsageChart();
+        }
+    });
+
+    endInput.addEventListener('change', (e) => {
+        chartEndDate = e.target.value;
+        monthInput.value = ''; // limpa o mês
+        if (currentView === 'admin') {
+            renderAdminHistory();
+            renderUsageChart();
+        }
+    });
+
+    fullDayToggle.addEventListener('change', (e) => {
+        if (e.target.checked) {
+            selectedTimeSlots = [];
+            renderTimeGrid();
+        }
+    });
+
+    btnReserve.addEventListener('click', handleReserve);
+
+    // Modal Events
+    document.getElementById('btn-close-modal').addEventListener('click', () => {
+        document.getElementById('password-modal').classList.remove('display-flex');
+        document.getElementById('password-modal').style.display = 'none';
+    });
+
+    document.getElementById('btn-confirm-cancel').addEventListener('click', handleCancel);
+
+    document.getElementById('btn-close-confirm').addEventListener('click', () => {
+        document.getElementById('confirm-modal').style.display = 'none';
+    });
+
+    document.getElementById('btn-close-admin-modal').addEventListener('click', () => {
+        document.getElementById('admin-auth-modal').style.display = 'none';
+    });
+
+    document.getElementById('btn-login-admin').addEventListener('click', handleAdminLogin);
+}
+
+function switchView(view) {
+    currentView = view;
+    if (view === 'reservation') {
+        reservationView.classList.remove('hidden');
+        adminView.classList.add('hidden');
+        navReservation.classList.add('active');
+        navAdmin.classList.remove('active');
+        updateDashboardStats();
+    } else {
+        reservationView.classList.add('hidden');
+        adminView.classList.remove('hidden');
+        navReservation.classList.remove('active');
+        navAdmin.classList.add('active');
+        renderAdminHistory();
+        renderUsageChart();
+    }
+}
+
+// --- Modals & Handlers ---
+
+window.openCancelModal = function(id) {
+    bookingToCancel = id;
+    document.getElementById('password-modal').style.display = 'flex';
+    document.getElementById('cancel-password').value = '';
+};
+
+function handleCancel() {
+    const password = document.getElementById('cancel-password').value;
+    const booking = bookings.find(b => b.id === bookingToCancel);
+    
+    if (!booking) return;
+
+    const user = USERS.find(u => u.name === booking.userName);
+    const admins = USERS.filter(u => u.isAdmin);
+    const managers = USERS.filter(u => u.canCancelOthers);
+
+    let canceledBy = null;
+    
+    if (user && user.password && password === user.password) {
+        canceledBy = user.name;
+    }
+    if (!canceledBy) {
+        const matchingAdmin = admins.find(a => a.password && password === a.password);
+        if (matchingAdmin) canceledBy = matchingAdmin.name;
+    }
+    if (!canceledBy) {
+        const matchingManager = managers.find(m => m.password && password === m.password);
+        if (matchingManager) canceledBy = matchingManager.name;
+    }
+
+    if (canceledBy) {
+        // Update status in Firebase — real-time listener handles re-rendering
+        bookingsRef.child(booking.id).update({ 
+            status: 'canceled',
+            canceledBy: canceledBy
+        });
+        document.getElementById('password-modal').style.display = 'none';
+        alert('Reserva cancelada com sucesso.');
+    } else {
+        alert('Senha incorreta.');
+    }
+}
+
+function openAdminAuth() {
+    document.getElementById('admin-auth-modal').style.display = 'flex';
+    document.getElementById('admin-password').value = '';
+}
+
+function handleAdminLogin() {
+    const password = document.getElementById('admin-password').value;
+    const admins = USERS.filter(u => u.isAdmin);
+    
+    if (admins.some(a => a.password && password === a.password)) {
+        document.getElementById('admin-auth-modal').style.display = 'none';
+        switchView('admin');
+    } else {
+        alert('Senha administrativa incorreta.');
+    }
+}
+
+window.confirmKey = function(id) {
+    // Update keyReceived in Firebase — real-time listener handles re-rendering
+    bookingsRef.child(id).update({ keyReceived: true });
+};
+
+function showConfirmation(msg) {
+    document.getElementById('confirm-message').textContent = msg;
+    document.getElementById('confirm-modal').style.display = 'flex';
+}
+
+// --- Start ---
+init();

@@ -401,7 +401,10 @@ function renderAdminHistory() {
             <td>${formattedDate} ${b.fullDay ? '' : b.time}</td>
             <td>${b.userName}</td>
             <td>${b.fullDay ? 'Dia Todo' : 'Horário'}</td>
-            <td><span class="badge badge-${b.status}">${b.status === 'active' ? 'Ativo' : 'Cancelado'}</span></td>
+            <td>
+                <span class="badge badge-${b.status}">${b.status === 'active' ? 'Ativo' : 'Cancelado'}</span>
+                ${b.status === 'canceled' && b.canceledBy ? `<div style="font-size: 0.7rem; color: #64748b; margin-top: 4px;">por ${b.canceledBy}</div>` : ''}
+            </td>
             <td>
                 ${isEligibleForKey ? 
                     (b.keyReceived ? 
@@ -550,13 +553,26 @@ function handleCancel() {
     const admins = USERS.filter(u => u.isAdmin);
     const managers = USERS.filter(u => u.canCancelOthers);
 
-    const isUserPassword = user && user.password && password === user.password;
-    const isAdminPassword = admins.some(a => a.password && password === a.password);
-    const isManagerPassword = managers.some(m => m.password && password === m.password);
+    let canceledBy = null;
+    
+    if (user && user.password && password === user.password) {
+        canceledBy = user.name;
+    }
+    if (!canceledBy) {
+        const matchingAdmin = admins.find(a => a.password && password === a.password);
+        if (matchingAdmin) canceledBy = matchingAdmin.name;
+    }
+    if (!canceledBy) {
+        const matchingManager = managers.find(m => m.password && password === m.password);
+        if (matchingManager) canceledBy = matchingManager.name;
+    }
 
-    if (isUserPassword || isAdminPassword || isManagerPassword) {
+    if (canceledBy) {
         // Update status in Firebase — real-time listener handles re-rendering
-        bookingsRef.child(booking.id).update({ status: 'canceled' });
+        bookingsRef.child(booking.id).update({ 
+            status: 'canceled',
+            canceledBy: canceledBy
+        });
         document.getElementById('password-modal').style.display = 'none';
         alert('Reserva cancelada com sucesso.');
     } else {

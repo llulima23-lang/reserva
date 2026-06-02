@@ -7,7 +7,7 @@ const USERS = [
     { name: "Juliana Von", password: "017900" },
     { name: "Karyanne Oliveira", password: "028530" },
     { name: "Luciana Lima", password: "036570", isAdmin: true },
-    { name: "Marcus Vinicius", password: "086180", canCancelOthers: true },
+    { name: "Marcus Vinicius", password: "000861", canCancelOthers: true, isAdmin: true },
     { name: "Adilline Bezerra", password: "026722" },
     { name: "Mirian Mota", password: "043906" },
     { name: "Patricia Furtado", password: "060866" },

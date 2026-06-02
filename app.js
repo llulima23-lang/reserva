@@ -366,9 +366,9 @@ function renderAdminHistory() {
     });
 
     const sorted = [...filtered].sort((a, b) => {
-        const dateCompare = b.date.localeCompare(a.date);
+        const dateCompare = a.date.localeCompare(b.date);
         if (dateCompare !== 0) return dateCompare;
-        return (b.time || '').localeCompare(a.time || '');
+        return (a.time || '').localeCompare(b.time || '');
     });
     
     sorted.forEach(b => {
@@ -526,11 +526,11 @@ function handleCancel() {
     if (!booking) return;
 
     const user = USERS.find(u => u.name === booking.userName);
-    const admin = USERS.find(u => u.isAdmin);
+    const admins = USERS.filter(u => u.isAdmin);
     const managers = USERS.filter(u => u.canCancelOthers);
 
     const isUserPassword = user && user.password && password === user.password;
-    const isAdminPassword = admin && admin.password && password === admin.password;
+    const isAdminPassword = admins.some(a => a.password && password === a.password);
     const isManagerPassword = managers.some(m => m.password && password === m.password);
 
     if (isUserPassword || isAdminPassword || isManagerPassword) {
@@ -550,9 +550,9 @@ function openAdminAuth() {
 
 function handleAdminLogin() {
     const password = document.getElementById('admin-password').value;
-    const admin = USERS.find(u => u.isAdmin);
+    const admins = USERS.filter(u => u.isAdmin);
     
-    if (password === admin.password) {
+    if (admins.some(a => a.password && password === a.password)) {
         document.getElementById('admin-auth-modal').style.display = 'none';
         switchView('admin');
     } else {

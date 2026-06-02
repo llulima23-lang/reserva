@@ -376,13 +376,34 @@ function renderAdminHistory() {
         const dateObj = new Date(b.date + 'T12:00:00');
         const formattedDate = dateObj.toLocaleDateString('pt-BR');
         
+        const now = new Date();
+        const offset = now.getTimezoneOffset() * 60000;
+        const localNow = new Date(now - offset);
+        const currentDate = localNow.toISOString().split('T')[0];
+        
+        let isEligibleForKey = false;
+        if (b.status === 'active') {
+            if (currentDate > b.date) {
+                isEligibleForKey = true;
+            } else if (currentDate === b.date) {
+                if (b.fullDay) {
+                    isEligibleForKey = true;
+                } else {
+                    const bookingHour = parseInt(b.time.substring(0, 2), 10);
+                    if (now.getHours() >= bookingHour) {
+                        isEligibleForKey = true;
+                    }
+                }
+            }
+        }
+        
         tr.innerHTML = `
             <td>${formattedDate} ${b.fullDay ? '' : b.time}</td>
             <td>${b.userName}</td>
             <td>${b.fullDay ? 'Dia Todo' : 'Horário'}</td>
             <td><span class="badge badge-${b.status}">${b.status === 'active' ? 'Ativo' : 'Cancelado'}</span></td>
             <td>
-                ${b.status === 'active' ? 
+                ${isEligibleForKey ? 
                     (b.keyReceived ? 
                         '<span class="badge badge-key-received">Chave Recebida</span>' : 
                         '<span class="badge badge-key">Pendente</span>'
@@ -390,7 +411,7 @@ function renderAdminHistory() {
                 }
             </td>
             <td>
-                ${(b.status === 'active' && !b.keyReceived) ? 
+                ${(isEligibleForKey && !b.keyReceived) ? 
                     `<button class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; width: auto;" onclick="confirmKey('${b.id}')">Recebi Chave</button>` : 
                     ''
                 }
